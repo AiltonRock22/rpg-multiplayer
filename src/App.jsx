@@ -32,6 +32,18 @@ const CLASSES = [
 
 const MAX_HP = 3;
 
+// LISTA DE FRASES ÉPICAS DE CARREGAMENTO
+const LOADING_PHRASES = [
+  "Desenrolando pergaminhos ancestrais...",
+  "Verificando conhecimentos milenares...",
+  "Convocando os espíritos da sabedoria...",
+  "Afiando espadas e polindo escudos...",
+  "Consultando os oráculos antigos...",
+  "Preparando a arena de batalha...",
+  "Sussurrando magias de conexão...",
+  "Invocando heróis de outros reinos..."
+];
+
 export default function FunctionalRpgGame() {
   const [user, setUser] = useState(null);
   
@@ -44,6 +56,7 @@ export default function FunctionalRpgGame() {
   const [activeRooms, setActiveRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0]);
   
   // PROTEÇÃO CONTRA CLIQUES MÚLTIPLOS (O que causava os 30 guerreiros)
   const [isProcessing, setIsProcessing] = useState(false);
@@ -97,6 +110,19 @@ export default function FunctionalRpgGame() {
     });
     return () => unsubRoom();
   }, [currentRoom?.id]);
+
+  // EFEITO DO CARREGAMENTO (Alterna as frases a cada 2,5 segundos)
+  useEffect(() => {
+    if (!loading) return;
+    const interval = setInterval(() => {
+      setLoadingPhrase(prev => {
+        const currentIndex = LOADING_PHRASES.indexOf(prev);
+        const nextIndex = (currentIndex + 1) % LOADING_PHRASES.length;
+        return LOADING_PHRASES[nextIndex];
+      });
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   // --- AÇÕES DO LOBBY ---
 
@@ -302,7 +328,13 @@ export default function FunctionalRpgGame() {
     </div>
   );
 
-  if (loading) return <div className="min-h-screen bg-stone-950 flex items-center justify-center text-amber-500 font-serif text-2xl animate-pulse">Carregando os Pergaminhos...</div>;
+  if (loading) return (
+    <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center text-amber-500 font-serif p-4 text-center bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-stone-900 to-stone-950">
+      <Scroll className="w-20 h-20 mb-8 animate-pulse text-amber-600 drop-shadow-[0_0_15px_rgba(217,119,6,0.5)]" />
+      <h2 className="text-3xl md:text-5xl font-black uppercase tracking-widest mb-4">Aguarde, Herói</h2>
+      <p className="text-stone-400 text-xl md:text-2xl animate-pulse transition-all duration-500">{loadingPhrase}</p>
+    </div>
+  );
 
   // TELA 1: CRIAÇÃO DE PERFIL
   if (isCreatingProfile) {
