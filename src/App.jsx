@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Shield, Swords, Scroll, Castle, Skull, Heart,
-  User, Users, Play, Target, Sparkles, Trophy, LogOut, Plus, HelpCircle, Check, X, Loader2
+  User, Users, Play, Target, Sparkles, Trophy, LogOut, Plus, HelpCircle, Check, X, Loader2, UserPlus
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO SEU FIREBASE ---
@@ -31,7 +31,7 @@ const CLASSES = [
 ];
 
 const MAX_HP = 3;
-const GAME_VERSION = "Alpha-001";
+const GAME_VERSION = "Alpha-003";
 
 // LISTA DE FRASES ÉPICAS DE CARREGAMENTO
 const LOADING_PHRASES = [
@@ -225,6 +225,25 @@ export default function FunctionalRpgGame() {
         currentAnswer: '',
         currentGuess: ''
       });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const addBot = async () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const botPlayer = {
+        uid: 'bot_' + Math.random().toString(36).substring(2, 9),
+        name: 'Aluno Teste (Bot)',
+        classId: 'mago',
+        team: 'B'
+      };
+      const newPlayers = [...currentRoom.players, botPlayer];
+      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
     } catch (e) {
       console.error(e);
     } finally {
