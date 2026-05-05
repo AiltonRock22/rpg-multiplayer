@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Shield, Swords, Scroll, Castle, Skull, Heart,
-  User, Users, Play, Target, Sparkles, Trophy, LogOut, Plus, HelpCircle, Check, X
+  User, Users, Play, Target, Sparkles, Trophy, LogOut, Plus, HelpCircle, Check, X, Loader2
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO DO SEU FIREBASE ---
@@ -44,8 +44,11 @@ export default function FunctionalRpgGame() {
   const [activeRooms, setActiveRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // PROTEÇÃO CONTRA CLIQUES MÚLTIPLOS (O que causava os 30 guerreiros)
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  // ESTADOS TEMPORÁRIOS DO COMBATE (Para os inputs de texto)
+  // ESTADOS TEMPORÁRIOS DO COMBATE
   const [battleInput, setBattleInput] = useState({ question: '', answer: '', guess: '' });
 
   // 1. Inicializa Autenticação
@@ -99,60 +102,103 @@ export default function FunctionalRpgGame() {
 
   const handleCreateProfile = async (e) => {
     e.preventDefault();
-    if (!user || !newProfile.name) return;
-    await setDoc(doc(db, 'rpg_users', user.uid), {
-      name: newProfile.name,
-      classId: newProfile.classId,
-      wins: 0,
-      matchesPlayed: 0
-    });
+    if (!user || !newProfile.name || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await setDoc(doc(db, 'rpg_users', user.uid), {
+        name: newProfile.name,
+        classId: newProfile.classId,
+        wins: 0,
+        matchesPlayed: 0
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const createRoom = async () => {
-    const roomRef = await addDoc(collection(db, 'rpg_rooms'), {
-      hostId: user.uid,
-      hostName: profile.name,
-      status: 'waiting', 
-      players: [{ uid: user.uid, name: profile.name, classId: profile.classId, team: 'A' }]
-    });
-    setCurrentRoom({ id: roomRef.id, status: 'waiting' });
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const roomRef = await addDoc(collection(db, 'rpg_rooms'), {
+        hostId: user.uid,
+        hostName: profile.name,
+        status: 'waiting', 
+        players: [{ uid: user.uid, name: profile.name, classId: profile.classId, team: 'A' }]
+      });
+      setCurrentRoom({ id: roomRef.id, status: 'waiting' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const joinRoom = async (roomId) => {
-    const roomToJoin = activeRooms.find(r => r.id === roomId);
-    if (!roomToJoin) return;
-    
-    // Divide quem entra: Se a Equipa A tiver mais jogadores, vai para a B, e vice-versa
-    const teamACount = roomToJoin.players.filter(p => p.team === 'A').length;
-    const teamBCount = roomToJoin.players.filter(p => p.team === 'B').length;
-    const assignedTeam = teamACount > teamBCount ? 'B' : 'A';
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const roomToJoin = activeRooms.find(r => r.id === roomId);
+      if (!roomToJoin) return;
+      
+      // PROTEÇÃO DE CLONE: Verifica se o utilizador já está na sala
+      const isAlreadyInRoom = roomToJoin.players.some(p => p.uid === user.uid);
 
-    const newPlayers = [...roomToJoin.players, { uid: user.uid, name: profile.name, classId: profile.classId, team: assignedTeam }];
-    await updateDoc(doc(db, 'rpg_rooms', roomId), { players: newPlayers });
-    setCurrentRoom({ id: roomId, status: 'waiting' });
+      if (!isAlreadyInRoom) {
+        // Divide quem entra: Se a Equipa A tiver mais jogadores, vai para a B, e vice-versa
+        const teamACount = roomToJoin.players.filter(p => p.team === 'A').length;
+        const teamBCount = roomToJoin.players.filter(p => p.team === 'B').length;
+        const assignedTeam = teamACount > teamBCount ? 'B' : 'A';
+
+        const newPlayers = [...roomToJoin.players, { uid: user.uid, name: profile.name, classId: profile.classId, team: assignedTeam }];
+        await updateDoc(doc(db, 'rpg_rooms', roomId), { players: newPlayers });
+      }
+      
+      setCurrentRoom({ id: roomId, status: 'waiting' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const leaveRoom = async () => {
-    if (currentRoom.hostId === user.uid && currentRoom.status === 'waiting') {
-      await deleteDoc(doc(db, 'rpg_rooms', currentRoom.id)); 
-    } else {
-      const newPlayers = currentRoom.players.filter(p => p.uid !== user.uid);
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      if (currentRoom.hostId === user.uid && currentRoom.status === 'waiting') {
+        await deleteDoc(doc(db, 'rpg_rooms', currentRoom.id)); 
+      } else {
+        const newPlayers = currentRoom.players.filter(p => p.uid !== user.uid);
+        await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
+      }
+      setCurrentRoom(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsProcessing(false);
     }
-    setCurrentRoom(null);
   };
 
   const startGame = async () => {
-    await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
-      status: 'playing',
-      hpA: MAX_HP,
-      hpB: MAX_HP,
-      turn: 'A', // Começa com a Equipa A a atacar
-      battlePhase: 'ask', // Fases: ask (perguntar), answer (responder), judge (avaliar)
-      currentQuestion: '',
-      currentAnswer: '',
-      currentGuess: ''
-    });
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
+        status: 'playing',
+        hpA: MAX_HP,
+        hpB: MAX_HP,
+        turn: 'A', // Começa com a Equipa A a atacar
+        battlePhase: 'ask', // Fases: ask (perguntar), answer (responder), judge (avaliar)
+        currentQuestion: '',
+        currentAnswer: '',
+        currentGuess: ''
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // --- AÇÕES DE COMBATE ---
@@ -160,72 +206,88 @@ export default function FunctionalRpgGame() {
   // 1. Equipa Atacante envia a Pergunta e a Resposta Certa
   const submitQuestion = async (e) => {
     e.preventDefault();
-    if (!battleInput.question || !battleInput.answer) return;
-    await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-      currentQuestion: battleInput.question,
-      currentAnswer: battleInput.answer,
-      battlePhase: 'answer'
-    });
-    setBattleInput({ ...battleInput, question: '', answer: '' });
+    if (!battleInput.question || !battleInput.answer || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+        currentQuestion: battleInput.question,
+        currentAnswer: battleInput.answer,
+        battlePhase: 'answer'
+      });
+      setBattleInput({ ...battleInput, question: '', answer: '' });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // 2. Equipa Defensora envia o seu Palpite
   const submitGuess = async (e) => {
     e.preventDefault();
-    if (!battleInput.guess) return;
-    await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-      currentGuess: battleInput.guess,
-      battlePhase: 'judge'
-    });
-    setBattleInput({ ...battleInput, guess: '' });
+    if (!battleInput.guess || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+        currentGuess: battleInput.guess,
+        battlePhase: 'judge'
+      });
+      setBattleInput({ ...battleInput, guess: '' });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // 3. Equipa Atacante julga a resposta (Acertou ou Errou)
   const judgeAnswer = async (isCorrect) => {
-    const isTeamA = currentRoom.turn === 'A';
-    let newHpA = currentRoom.hpA;
-    let newHpB = currentRoom.hpB;
+    if (isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const isTeamA = currentRoom.turn === 'A';
+      let newHpA = currentRoom.hpA;
+      let newHpB = currentRoom.hpB;
 
-    // Se a defesa errou, perde vida
-    if (!isCorrect) {
-      if (isTeamA) newHpB -= 1;
-      else newHpA -= 1;
-    }
+      // Se a defesa errou, perde vida
+      if (!isCorrect) {
+        if (isTeamA) newHpB -= 1;
+        else newHpA -= 1;
+      }
 
-    // Verifica se alguém morreu
-    if (newHpA <= 0 || newHpB <= 0) {
-      const winner = newHpA > 0 ? 'A' : 'B';
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
-        status: 'finished', 
-        winner: winner,
-        hpA: newHpA,
-        hpB: newHpB
-      });
-      
-      // Atualiza vitórias no perfil
-      currentRoom.players.forEach(async (p) => {
-        const pIsWinner = p.team === winner;
-        const userRef = doc(db, 'rpg_users', p.uid);
-        const snap = await getDoc(userRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          await updateDoc(userRef, { 
-            matchesPlayed: (data.matchesPlayed || 0) + 1,
-            wins: pIsWinner ? (data.wins || 0) + 1 : (data.wins || 0)
-          });
-        }
-      });
-    } else {
-      // Combate continua, troca o turno
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-        hpA: newHpA,
-        hpB: newHpB,
-        turn: isTeamA ? 'B' : 'A',
-        battlePhase: 'ask',
-        currentQuestion: '',
-        currentAnswer: '',
-        currentGuess: ''
-      });
+      // Verifica se alguém morreu
+      if (newHpA <= 0 || newHpB <= 0) {
+        const winner = newHpA > 0 ? 'A' : 'B';
+        await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
+          status: 'finished', 
+          winner: winner,
+          hpA: newHpA,
+          hpB: newHpB
+        });
+        
+        // Atualiza vitórias no perfil
+        currentRoom.players.forEach(async (p) => {
+          const pIsWinner = p.team === winner;
+          const userRef = doc(db, 'rpg_users', p.uid);
+          const snap = await getDoc(userRef);
+          if (snap.exists()) {
+            const data = snap.data();
+            await updateDoc(userRef, { 
+              matchesPlayed: (data.matchesPlayed || 0) + 1,
+              wins: pIsWinner ? (data.wins || 0) + 1 : (data.wins || 0)
+            });
+          }
+        });
+      } else {
+        // Combate continua, troca o turno
+        await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+          hpA: newHpA,
+          hpB: newHpB,
+          turn: isTeamA ? 'B' : 'A',
+          battlePhase: 'ask',
+          currentQuestion: '',
+          currentAnswer: '',
+          currentGuess: ''
+        });
+      }
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -254,21 +316,21 @@ export default function FunctionalRpgGame() {
           <div className="space-y-6">
             <div>
               <label className="block text-amber-600 text-sm font-bold mb-2 uppercase tracking-wider">Como serás conhecido?</label>
-              <input required type="text" value={newProfile.name} onChange={e => setNewProfile({...newProfile, name: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 outline-none focus:border-amber-500 text-amber-100 font-bold rounded-lg text-lg text-center" placeholder="Ex: Arthur" />
+              <input required disabled={isProcessing} type="text" value={newProfile.name} onChange={e => setNewProfile({...newProfile, name: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 outline-none focus:border-amber-500 text-amber-100 font-bold rounded-lg text-lg text-center disabled:opacity-50" placeholder="Ex: Arthur" />
             </div>
             <div>
               <label className="block text-amber-600 text-sm font-bold mb-2 uppercase tracking-wider">Escolhe o teu caminho</label>
               <div className="grid grid-cols-3 gap-3">
                 {CLASSES.map(c => (
-                  <button key={c.id} type="button" onClick={() => setNewProfile({...newProfile, classId: c.id})} className={`p-4 border-2 rounded-lg flex flex-col items-center gap-2 transition-all ${newProfile.classId === c.id ? 'border-amber-500 bg-stone-800 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'border-stone-700 bg-stone-950 hover:border-stone-600 hover:bg-stone-900'}`}>
+                  <button disabled={isProcessing} key={c.id} type="button" onClick={() => setNewProfile({...newProfile, classId: c.id})} className={`p-4 border-2 rounded-lg flex flex-col items-center gap-2 transition-all disabled:opacity-50 ${newProfile.classId === c.id ? 'border-amber-500 bg-stone-800 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'border-stone-700 bg-stone-950 hover:border-stone-600 hover:bg-stone-900'}`}>
                     <span className="text-3xl">{c.icon}</span>
                     <span className="text-xs font-bold text-stone-300 uppercase tracking-wider">{c.name}</span>
                   </button>
                 ))}
               </div>
             </div>
-            <button type="submit" className="w-full bg-amber-700 hover:bg-amber-600 text-stone-100 font-black py-5 mt-4 uppercase tracking-widest rounded-lg transition-colors shadow-lg shadow-amber-900/50 flex items-center justify-center gap-2">
-              <Swords className="w-5 h-5"/> Iniciar Jornada
+            <button type="submit" disabled={isProcessing} className="w-full bg-amber-700 hover:bg-amber-600 text-stone-100 font-black py-5 mt-4 uppercase tracking-widest rounded-lg transition-colors shadow-lg shadow-amber-900/50 flex items-center justify-center gap-2 disabled:opacity-50">
+              {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Swords className="w-5 h-5"/> Iniciar Jornada</>}
             </button>
           </div>
         </form>
@@ -305,8 +367,8 @@ export default function FunctionalRpgGame() {
           {/* Área de Salas */}
           <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
             <h2 className="text-3xl font-black text-stone-300 flex items-center gap-3 uppercase tracking-widest"><Castle className="w-8 h-8 text-amber-600"/> Campos de Batalha</h2>
-            <button onClick={createRoom} className="w-full sm:w-auto bg-amber-700 hover:bg-amber-600 text-stone-100 font-black px-8 py-4 flex items-center justify-center gap-2 rounded-xl shadow-[0_0_20px_rgba(217,119,6,0.2)] transition-all hover:scale-105 uppercase tracking-wider">
-              <Plus className="w-5 h-5"/> Criar Batalha
+            <button onClick={createRoom} disabled={isProcessing} className="w-full sm:w-auto bg-amber-700 hover:bg-amber-600 text-stone-100 font-black px-8 py-4 flex items-center justify-center gap-2 rounded-xl shadow-[0_0_20px_rgba(217,119,6,0.2)] transition-all hover:scale-105 uppercase tracking-wider disabled:opacity-50">
+              {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5"/> Criar Batalha</>}
             </button>
           </div>
 
@@ -324,8 +386,8 @@ export default function FunctionalRpgGame() {
                     <h3 className="font-black text-stone-200 text-xl mb-1 truncate">Arena de {room.hostName}</h3>
                     <p className="text-stone-400 text-sm flex items-center gap-2 font-bold uppercase tracking-wider"><Users className="w-4 h-4 text-amber-500"/> {room.players?.length || 1} Guerreiros</p>
                   </div>
-                  <button onClick={() => joinRoom(room.id)} className="w-full bg-stone-800 hover:bg-amber-700 text-amber-500 hover:text-white border border-stone-700 hover:border-amber-600 py-3 font-black uppercase text-sm rounded-lg transition-all flex justify-center items-center gap-2">
-                    <Swords className="w-4 h-4"/> Entrar no Combate
+                  <button onClick={() => joinRoom(room.id)} disabled={isProcessing} className="w-full bg-stone-800 hover:bg-amber-700 text-amber-500 hover:text-white border border-stone-700 hover:border-amber-600 py-3 font-black uppercase text-sm rounded-lg transition-all flex justify-center items-center gap-2 disabled:opacity-50">
+                    {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Swords className="w-4 h-4"/> Entrar no Combate</>}
                   </button>
                 </div>
               ))
@@ -347,8 +409,8 @@ export default function FunctionalRpgGame() {
       
       {/* Botão Sair do Topo */}
       <div className="max-w-7xl w-full mx-auto mb-6 flex justify-between items-center">
-        <button onClick={leaveRoom} className="text-stone-500 hover:text-red-400 flex items-center gap-2 font-bold text-sm uppercase tracking-widest transition-colors bg-stone-900 px-4 py-2 rounded-lg border border-stone-800">
-          <LogOut className="w-4 h-4"/> Fugir da Batalha
+        <button onClick={leaveRoom} disabled={isProcessing} className="text-stone-500 hover:text-red-400 flex items-center gap-2 font-bold text-sm uppercase tracking-widest transition-colors bg-stone-900 px-4 py-2 rounded-lg border border-stone-800 disabled:opacity-50">
+          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4"/>} Fugir da Batalha
         </button>
         {currentRoom.status !== 'waiting' && (
            <div className="bg-stone-900 border border-stone-700 px-6 py-2 rounded-full font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
@@ -389,7 +451,8 @@ export default function FunctionalRpgGame() {
             
             <div className="mt-6 flex flex-wrap justify-center gap-4">
               {teamA.map(p => (
-                <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px]">
+                <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px] relative">
+                   {p.uid === user.uid && <div className="absolute -top-2 -right-2 w-4 h-4 bg-amber-500 rounded-full border-2 border-stone-900 animate-pulse" title="Você"></div>}
                    <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl mb-2 shadow-lg ${CLASSES.find(c => c.id === p.classId)?.color}`}>{CLASSES.find(c => c.id === p.classId)?.icon}</div>
                    <p className="font-bold text-stone-200 text-center text-sm truncate w-full">{p.name}</p>
                 </div>
@@ -416,7 +479,8 @@ export default function FunctionalRpgGame() {
                 <div className="w-full h-24 flex items-center justify-center border-2 border-dashed border-stone-700 text-stone-500 rounded-xl font-bold uppercase tracking-wider">Aguardando...</div>
               ) : (
                 teamB.map(p => (
-                  <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px]">
+                  <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px] relative">
+                     {p.uid === user.uid && <div className="absolute -top-2 -right-2 w-4 h-4 bg-amber-500 rounded-full border-2 border-stone-900 animate-pulse" title="Você"></div>}
                      <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl mb-2 shadow-lg ${CLASSES.find(c => c.id === p.classId)?.color}`}>{CLASSES.find(c => c.id === p.classId)?.icon}</div>
                      <p className="font-bold text-stone-200 text-center text-sm truncate w-full">{p.name}</p>
                   </div>
@@ -431,8 +495,8 @@ export default function FunctionalRpgGame() {
         {/* Se for o Host e o jogo não começou */}
         {isHost && currentRoom.status === 'waiting' && teamB.length > 0 && (
           <div className="text-center animate-in slide-in-from-bottom-4">
-            <button onClick={startGame} className="px-12 py-6 bg-red-700 hover:bg-red-600 text-white font-black text-3xl uppercase tracking-widest rounded-2xl transition-all shadow-[0_0_40px_rgba(185,28,28,0.5)] hover:scale-105 hover:-translate-y-2 border-4 border-red-900 flex items-center gap-4 mx-auto">
-              <Play className="w-8 h-8 fill-white"/> Iniciar Batalha Mortal
+            <button onClick={startGame} disabled={isProcessing} className="px-12 py-6 bg-red-700 hover:bg-red-600 text-white font-black text-3xl uppercase tracking-widest rounded-2xl transition-all shadow-[0_0_40px_rgba(185,28,28,0.5)] hover:scale-105 hover:-translate-y-2 border-4 border-red-900 flex items-center gap-4 mx-auto disabled:opacity-50">
+              {isProcessing ? <Loader2 className="w-8 h-8 fill-white animate-spin" /> : <Play className="w-8 h-8 fill-white"/>} Iniciar Batalha Mortal
             </button>
             <p className="mt-4 text-stone-400 font-bold">Preparem os vossos conhecimentos.</p>
           </div>
@@ -455,14 +519,14 @@ export default function FunctionalRpgGame() {
                   
                   <div>
                     <label className="block text-amber-500 font-bold uppercase tracking-wider mb-2">Pergunta para o Oponente</label>
-                    <textarea required value={battleInput.question} onChange={e => setBattleInput({...battleInput, question: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 rounded-xl text-white outline-none focus:border-amber-500 resize-none h-24" placeholder="Qual é o maior planeta do sistema solar?" />
+                    <textarea required disabled={isProcessing} value={battleInput.question} onChange={e => setBattleInput({...battleInput, question: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 rounded-xl text-white outline-none focus:border-amber-500 resize-none h-24 disabled:opacity-50" placeholder="Qual é o maior planeta do sistema solar?" />
                   </div>
                   <div>
                     <label className="block text-emerald-500 font-bold uppercase tracking-wider mb-2">A Resposta Certa (Secreta)</label>
-                    <input required type="text" value={battleInput.answer} onChange={e => setBattleInput({...battleInput, answer: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 rounded-xl text-white outline-none focus:border-emerald-500" placeholder="Júpiter" />
+                    <input required disabled={isProcessing} type="text" value={battleInput.answer} onChange={e => setBattleInput({...battleInput, answer: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 rounded-xl text-white outline-none focus:border-emerald-500 disabled:opacity-50" placeholder="Júpiter" />
                   </div>
-                  <button type="submit" className="w-full py-5 bg-amber-700 hover:bg-amber-600 text-white font-black text-2xl uppercase tracking-widest rounded-xl transition-all shadow-lg flex justify-center items-center gap-3">
-                     Lançar Pergunta! <Sparkles className="w-6 h-6"/>
+                  <button type="submit" disabled={isProcessing} className="w-full py-5 bg-amber-700 hover:bg-amber-600 text-white font-black text-2xl uppercase tracking-widest rounded-xl transition-all shadow-lg flex justify-center items-center gap-3 disabled:opacity-50">
+                     {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Sparkles className="w-6 h-6"/> Lançar Pergunta!</>}
                   </button>
                 </form>
               ) : (
@@ -487,10 +551,10 @@ export default function FunctionalRpgGame() {
                   
                   <div>
                     <label className="block text-blue-400 font-bold uppercase tracking-wider mb-3 text-center">Rápido! Qual é a vossa defesa?</label>
-                    <input required type="text" value={battleInput.guess} onChange={e => setBattleInput({...battleInput, guess: e.target.value})} className="w-full bg-stone-950 border-2 border-blue-900 p-6 rounded-2xl text-white outline-none focus:border-blue-500 text-center text-2xl font-bold" placeholder="Digite a resposta aqui..." />
+                    <input required disabled={isProcessing} type="text" value={battleInput.guess} onChange={e => setBattleInput({...battleInput, guess: e.target.value})} className="w-full bg-stone-950 border-2 border-blue-900 p-6 rounded-2xl text-white outline-none focus:border-blue-500 text-center text-2xl font-bold disabled:opacity-50" placeholder="Digite a resposta aqui..." />
                   </div>
-                  <button type="submit" className="w-full py-5 bg-blue-700 hover:bg-blue-600 text-white font-black text-2xl uppercase tracking-widest rounded-xl transition-all shadow-[0_0_20px_rgba(29,78,216,0.4)] flex justify-center items-center gap-3">
-                     Levantar Escudo! (Responder) <Shield className="w-6 h-6"/>
+                  <button type="submit" disabled={isProcessing} className="w-full py-5 bg-blue-700 hover:bg-blue-600 text-white font-black text-2xl uppercase tracking-widest rounded-xl transition-all shadow-[0_0_20px_rgba(29,78,216,0.4)] flex justify-center items-center gap-3 disabled:opacity-50">
+                     {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Shield className="w-6 h-6"/> Levantar Escudo! (Responder)</>}
                   </button>
                 </form>
               ) : (
@@ -525,11 +589,11 @@ export default function FunctionalRpgGame() {
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-stone-800">
-                    <button onClick={() => judgeAnswer(true)} className="flex-1 py-5 bg-stone-800 hover:bg-emerald-900 text-emerald-400 font-black uppercase tracking-widest rounded-xl transition-all border border-stone-700 hover:border-emerald-500 flex justify-center items-center gap-2">
-                       <Check className="w-6 h-6"/> Aceitar Defesa (Não sofrem dano)
+                    <button onClick={() => judgeAnswer(true)} disabled={isProcessing} className="flex-1 py-5 bg-stone-800 hover:bg-emerald-900 text-emerald-400 font-black uppercase tracking-widest rounded-xl transition-all border border-stone-700 hover:border-emerald-500 flex justify-center items-center gap-2 disabled:opacity-50">
+                       {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Check className="w-6 h-6"/> Aceitar Defesa</>}
                     </button>
-                    <button onClick={() => judgeAnswer(false)} className="flex-1 py-5 bg-stone-800 hover:bg-red-900 text-red-500 font-black uppercase tracking-widest rounded-xl transition-all border border-stone-700 hover:border-red-500 flex justify-center items-center gap-2">
-                       <X className="w-6 h-6"/> Recusar (Causar -1 Vida)
+                    <button onClick={() => judgeAnswer(false)} disabled={isProcessing} className="flex-1 py-5 bg-stone-800 hover:bg-red-900 text-red-500 font-black uppercase tracking-widest rounded-xl transition-all border border-stone-700 hover:border-red-500 flex justify-center items-center gap-2 disabled:opacity-50">
+                       {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><X className="w-6 h-6"/> Recusar (Causar Dano)</>}
                     </button>
                   </div>
                 </div>
