@@ -31,6 +31,7 @@ const CLASSES = [
 ];
 
 const MAX_HP = 3;
+const GAME_VERSION = "Alpha-001";
 
 // LISTA DE FRASES ÉPICAS DE CARREGAMENTO
 const LOADING_PHRASES = [
@@ -146,15 +147,17 @@ export default function FunctionalRpgGame() {
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      const roomRef = await addDoc(collection(db, 'rpg_rooms'), {
+      const newRoomData = {
         hostId: user.uid,
         hostName: profile.name,
         status: 'waiting', 
         players: [{ uid: user.uid, name: profile.name, classId: profile.classId, team: 'A' }]
-      });
-      setCurrentRoom({ id: roomRef.id, status: 'waiting' });
+      };
+      const roomRef = await addDoc(collection(db, 'rpg_rooms'), newRoomData);
+      setCurrentRoom({ id: roomRef.id, ...newRoomData });
     } catch (e) {
       console.error(e);
+      alert("Falha de comunicação mágica. Verifique a internet e tente novamente.");
     } finally {
       setIsProcessing(false);
     }
@@ -170,19 +173,21 @@ export default function FunctionalRpgGame() {
       // PROTEÇÃO DE CLONE: Verifica se o utilizador já está na sala
       const isAlreadyInRoom = roomToJoin.players.some(p => p.uid === user.uid);
 
+      let newPlayers = roomToJoin.players;
       if (!isAlreadyInRoom) {
         // Divide quem entra: Se a Equipa A tiver mais jogadores, vai para a B, e vice-versa
         const teamACount = roomToJoin.players.filter(p => p.team === 'A').length;
         const teamBCount = roomToJoin.players.filter(p => p.team === 'B').length;
         const assignedTeam = teamACount > teamBCount ? 'B' : 'A';
 
-        const newPlayers = [...roomToJoin.players, { uid: user.uid, name: profile.name, classId: profile.classId, team: assignedTeam }];
+        newPlayers = [...roomToJoin.players, { uid: user.uid, name: profile.name, classId: profile.classId, team: assignedTeam }];
         await updateDoc(doc(db, 'rpg_rooms', roomId), { players: newPlayers });
       }
       
-      setCurrentRoom({ id: roomId, status: 'waiting' });
+      setCurrentRoom({ ...roomToJoin, players: newPlayers });
     } catch (e) {
       console.error(e);
+      alert("Falha de comunicação mágica. Verifique a internet e tente novamente.");
     } finally {
       setIsProcessing(false);
     }
@@ -333,6 +338,7 @@ export default function FunctionalRpgGame() {
       <Scroll className="w-20 h-20 mb-8 animate-pulse text-amber-600 drop-shadow-[0_0_15px_rgba(217,119,6,0.5)]" />
       <h2 className="text-3xl md:text-5xl font-black uppercase tracking-widest mb-4">Aguarde, Herói</h2>
       <p className="text-stone-400 text-xl md:text-2xl animate-pulse transition-all duration-500">{loadingPhrase}</p>
+      <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest">v.{GAME_VERSION}</div>
     </div>
   );
 
@@ -366,6 +372,7 @@ export default function FunctionalRpgGame() {
             </button>
           </div>
         </form>
+        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest">v.{GAME_VERSION}</div>
       </div>
     );
   }
@@ -426,6 +433,7 @@ export default function FunctionalRpgGame() {
             )}
           </div>
         </div>
+        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest">v.{GAME_VERSION}</div>
       </div>
     );
   }
@@ -645,6 +653,7 @@ export default function FunctionalRpgGame() {
           </div>
         )}
 
+        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest z-50 pointer-events-none">v.{GAME_VERSION}</div>
       </div>
     </div>
   );
