@@ -31,7 +31,7 @@ const CLASSES = [
 ];
 
 const MAX_HP = 3;
-const GAME_VERSION = "Alpha-003";
+const GAME_VERSION = "Alpha-004";
 
 // LISTA DE FRASES ÉPICAS DE CARREGAMENTO
 const LOADING_PHRASES = [
@@ -59,7 +59,7 @@ export default function FunctionalRpgGame() {
   const [loading, setLoading] = useState(true);
   const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0]);
   
-  // PROTEÇÃO CONTRA CLIQUES MÚLTIPLOS (O que causava os 30 guerreiros)
+  // PROTEÇÃO CONTRA CLIQUES MÚLTIPLOS
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ESTADOS TEMPORÁRIOS DO COMBATE
@@ -112,7 +112,7 @@ export default function FunctionalRpgGame() {
     return () => unsubRoom();
   }, [currentRoom?.id]);
 
-  // EFEITO DO CARREGAMENTO (Alterna as frases a cada 2,5 segundos)
+  // EFEITO DO CARREGAMENTO (Alterna as frases)
   useEffect(() => {
     if (!loading) return;
     const interval = setInterval(() => {
@@ -153,11 +153,12 @@ export default function FunctionalRpgGame() {
         status: 'waiting', 
         players: [{ uid: user.uid, name: profile.name, classId: profile.classId, team: 'A' }]
       };
+      // addDoc é o único que precisa esperar (await) para sabermos o ID da sala
       const roomRef = await addDoc(collection(db, 'rpg_rooms'), newRoomData);
       setCurrentRoom({ id: roomRef.id, ...newRoomData });
     } catch (e) {
       console.error(e);
-      alert("Falha de comunicação mágica. Verifique a internet e tente novamente.");
+      alert("Falha mágica. Verifique a internet e tente novamente.");
     } finally {
       setIsProcessing(false);
     }
@@ -170,175 +171,155 @@ export default function FunctionalRpgGame() {
       const roomToJoin = activeRooms.find(r => r.id === roomId);
       if (!roomToJoin) return;
       
-      // PROTEÇÃO DE CLONE: Verifica se o utilizador já está na sala
       const isAlreadyInRoom = roomToJoin.players.some(p => p.uid === user.uid);
-
       let newPlayers = roomToJoin.players;
+      
       if (!isAlreadyInRoom) {
-        // Divide quem entra: Se a Equipa A tiver mais jogadores, vai para a B, e vice-versa
         const teamACount = roomToJoin.players.filter(p => p.team === 'A').length;
         const teamBCount = roomToJoin.players.filter(p => p.team === 'B').length;
         const assignedTeam = teamACount > teamBCount ? 'B' : 'A';
 
         newPlayers = [...roomToJoin.players, { uid: user.uid, name: profile.name, classId: profile.classId, team: assignedTeam }];
-        await updateDoc(doc(db, 'rpg_rooms', roomId), { players: newPlayers });
+        updateDoc(doc(db, 'rpg_rooms', roomId), { players: newPlayers }); // Sem await (Otimista)
       }
       
       setCurrentRoom({ ...roomToJoin, players: newPlayers });
-    } catch (e) {
-      console.error(e);
-      alert("Falha de comunicação mágica. Verifique a internet e tente novamente.");
     } finally {
-      setIsProcessing(false);
+      setTimeout(() => setIsProcessing(false), 400);
     }
   };
 
-  const leaveRoom = async () => {
+  const leaveRoom = () => {
     if (isProcessing) return;
     setIsProcessing(true);
-    try {
-      if (currentRoom.hostId === user.uid && currentRoom.status === 'waiting') {
-        await deleteDoc(doc(db, 'rpg_rooms', currentRoom.id)); 
-      } else {
-        const newPlayers = currentRoom.players.filter(p => p.uid !== user.uid);
-        await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
-      }
-      setCurrentRoom(null);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
+    
+    if (currentRoom.hostId === user.uid && currentRoom.status === 'waiting') {
+      deleteDoc(doc(db, 'rpg_rooms', currentRoom.id)); 
+    } else {
+      const newPlayers = currentRoom.players.filter(p => p.uid !== user.uid);
+      updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
     }
+    
+    setCurrentRoom(null);
+    setTimeout(() => setIsProcessing(false), 400);
   };
 
-  const startGame = async () => {
+  const startGame = () => {
     if (isProcessing) return;
     setIsProcessing(true);
-    try {
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
-        status: 'playing',
-        hpA: MAX_HP,
-        hpB: MAX_HP,
-        turn: 'A', // Começa com a Equipa A a atacar
-        battlePhase: 'ask', // Fases: ask (perguntar), answer (responder), judge (avaliar)
-        currentQuestion: '',
-        currentAnswer: '',
-        currentGuess: ''
-      });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
-    }
+    
+    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
+      status: 'playing',
+      hpA: MAX_HP,
+      hpB: MAX_HP,
+      turn: 'A',
+      battlePhase: 'ask',
+      currentQuestion: '',
+      currentAnswer: '',
+      currentGuess: ''
+    });
+    
+    setTimeout(() => setIsProcessing(false), 500);
   };
 
-  const addBot = async () => {
+  const addBot = () => {
     if (isProcessing) return;
     setIsProcessing(true);
-    try {
-      const botPlayer = {
-        uid: 'bot_' + Math.random().toString(36).substring(2, 9),
-        name: 'Aluno Teste (Bot)',
-        classId: 'mago',
-        team: 'B'
-      };
-      const newPlayers = [...currentRoom.players, botPlayer];
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
-    }
+    
+    const botPlayer = {
+      uid: 'bot_' + Math.random().toString(36).substring(2, 9),
+      name: 'Aluno Teste (Bot)',
+      classId: 'mago',
+      team: 'B'
+    };
+    
+    const newPlayers = [...currentRoom.players, botPlayer];
+    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
+    
+    setTimeout(() => setIsProcessing(false), 500);
   };
 
   // --- AÇÕES DE COMBATE ---
 
-  // 1. Equipa Atacante envia a Pergunta e a Resposta Certa
-  const submitQuestion = async (e) => {
+  const submitQuestion = (e) => {
     e.preventDefault();
     if (!battleInput.question || !battleInput.answer || isProcessing) return;
     setIsProcessing(true);
-    try {
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-        currentQuestion: battleInput.question,
-        currentAnswer: battleInput.answer,
-        battlePhase: 'answer'
-      });
-      setBattleInput({ ...battleInput, question: '', answer: '' });
-    } finally {
-      setIsProcessing(false);
-    }
+    
+    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+      currentQuestion: battleInput.question,
+      currentAnswer: battleInput.answer,
+      battlePhase: 'answer'
+    });
+    
+    setBattleInput({ ...battleInput, question: '', answer: '' });
+    setTimeout(() => setIsProcessing(false), 500);
   };
 
-  // 2. Equipa Defensora envia o seu Palpite
-  const submitGuess = async (e) => {
+  const submitGuess = (e) => {
     e.preventDefault();
     if (!battleInput.guess || isProcessing) return;
     setIsProcessing(true);
-    try {
-      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-        currentGuess: battleInput.guess,
-        battlePhase: 'judge'
-      });
-      setBattleInput({ ...battleInput, guess: '' });
-    } finally {
-      setIsProcessing(false);
-    }
+    
+    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+      currentGuess: battleInput.guess,
+      battlePhase: 'judge'
+    });
+    
+    setBattleInput({ ...battleInput, guess: '' });
+    setTimeout(() => setIsProcessing(false), 500);
   };
 
-  // 3. Equipa Atacante julga a resposta (Acertou ou Errou)
-  const judgeAnswer = async (isCorrect) => {
+  const judgeAnswer = (isCorrect) => {
     if (isProcessing) return;
     setIsProcessing(true);
-    try {
-      const isTeamA = currentRoom.turn === 'A';
-      let newHpA = currentRoom.hpA;
-      let newHpB = currentRoom.hpB;
+    
+    const isTeamA = currentRoom.turn === 'A';
+    let newHpA = currentRoom.hpA;
+    let newHpB = currentRoom.hpB;
 
-      // Se a defesa errou, perde vida
-      if (!isCorrect) {
-        if (isTeamA) newHpB -= 1;
-        else newHpA -= 1;
-      }
+    if (!isCorrect) {
+      if (isTeamA) newHpB -= 1;
+      else newHpA -= 1;
+    }
 
-      // Verifica se alguém morreu
-      if (newHpA <= 0 || newHpB <= 0) {
-        const winner = newHpA > 0 ? 'A' : 'B';
-        await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
-          status: 'finished', 
-          winner: winner,
-          hpA: newHpA,
-          hpB: newHpB
-        });
-        
-        // Atualiza vitórias no perfil
-        currentRoom.players.forEach(async (p) => {
-          const pIsWinner = p.team === winner;
-          const userRef = doc(db, 'rpg_users', p.uid);
-          const snap = await getDoc(userRef);
+    if (newHpA <= 0 || newHpB <= 0) {
+      const winner = newHpA > 0 ? 'A' : 'B';
+      updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
+        status: 'finished', 
+        winner: winner,
+        hpA: newHpA,
+        hpB: newHpB
+      });
+      
+      // Atualiza vitórias no perfil (em segundo plano)
+      currentRoom.players.forEach((p) => {
+        const pIsWinner = p.team === winner;
+        const userRef = doc(db, 'rpg_users', p.uid);
+        getDoc(userRef).then(snap => {
           if (snap.exists()) {
             const data = snap.data();
-            await updateDoc(userRef, { 
+            updateDoc(userRef, { 
               matchesPlayed: (data.matchesPlayed || 0) + 1,
               wins: pIsWinner ? (data.wins || 0) + 1 : (data.wins || 0)
             });
           }
         });
-      } else {
-        // Combate continua, troca o turno
-        await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-          hpA: newHpA,
-          hpB: newHpB,
-          turn: isTeamA ? 'B' : 'A',
-          battlePhase: 'ask',
-          currentQuestion: '',
-          currentAnswer: '',
-          currentGuess: ''
-        });
-      }
-    } finally {
-      setIsProcessing(false);
+      });
+    } else {
+      // Combate continua
+      updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+        hpA: newHpA,
+        hpB: newHpB,
+        turn: isTeamA ? 'B' : 'A',
+        battlePhase: 'ask',
+        currentQuestion: '',
+        currentAnswer: '',
+        currentGuess: ''
+      });
     }
+    
+    setTimeout(() => setIsProcessing(false), 500);
   };
 
 
@@ -539,7 +520,7 @@ export default function FunctionalRpgGame() {
                    <span className="font-bold uppercase tracking-wider mb-4">Aguardando Oponente...</span>
                    {isHost && (
                      <button onClick={addBot} disabled={isProcessing} className="bg-stone-800 hover:bg-stone-700 text-amber-500 border border-stone-600 px-4 py-2 rounded-lg text-xs flex items-center gap-2 transition-all shadow-md">
-                       <UserPlus className="w-4 h-4"/> Adicionar Aluno Teste (Bot)
+                       {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><UserPlus className="w-4 h-4"/> Adicionar Aluno Teste (Bot)</>}
                      </button>
                    )}
                 </div>
