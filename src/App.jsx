@@ -516,7 +516,14 @@ export default function FunctionalRpgGame() {
             
             <div className="mt-6 flex flex-wrap justify-center gap-4">
               {teamB.length === 0 ? (
-                <div className="w-full h-24 flex items-center justify-center border-2 border-dashed border-stone-700 text-stone-500 rounded-xl font-bold uppercase tracking-wider">Aguardando...</div>
+                <div className="w-full flex flex-col items-center justify-center border-2 border-dashed border-stone-700 text-stone-500 rounded-xl p-6">
+                   <span className="font-bold uppercase tracking-wider mb-4">Aguardando Oponente...</span>
+                   {isHost && (
+                     <button onClick={addBot} disabled={isProcessing} className="bg-stone-800 hover:bg-stone-700 text-amber-500 border border-stone-600 px-4 py-2 rounded-lg text-xs flex items-center gap-2 transition-all shadow-md">
+                       <UserPlus className="w-4 h-4"/> Adicionar Aluno Teste (Bot)
+                     </button>
+                   )}
+                </div>
               ) : (
                 teamB.map(p => (
                   <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px] relative">
