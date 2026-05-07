@@ -1,39 +1,64 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Shield, Swords, Scroll, Castle, Skull, Heart,
-  User, Users, Play, Target, Sparkles, Trophy, LogOut, Plus, HelpCircle, Check, X, Loader2, UserPlus
+  User, Users, Play, Target, Sparkles, Trophy, LogOut, 
+  Plus, HelpCircle, Check, X, Loader2, UserPlus, AlertCircle
 } from 'lucide-react';
 
-// --- CONFIGURAÇÃO DO SEU FIREBASE ---
+// --- CONFIGURAÇÃO DO FIREBASE (PROJETO: rpg-ailtonrock22) ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot, collection, updateDoc, addDoc, deleteDoc, query, where, getDoc } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  onSnapshot, 
+  collection, 
+  updateDoc, 
+  addDoc, 
+  deleteDoc, 
+  query, 
+  where, 
+  getDoc,
+  serverTimestamp,
+  enableNetwork,
+  disableNetwork,
+  waitForPendingWrites
+} from 'firebase/firestore';
 
+// Configuração do Firebase (SUBSTITUA PELO CONFIG REAL DO CONSOLE)
 const firebaseConfig = {
-  apiKey: "AIzaSyBB1eD7H8ADJcben-Tj0Tecq8nFVSylYDg",
-  authDomain: "noatas-3c8a0.firebaseapp.com",
-  projectId: "noatas-3c8a0",
-  storageBucket: "noatas-3c8a0.firebasestorage.app",
-  messagingSenderId: "245916779117",
-  appId: "1:245916779117:web:8bab27571f0e644fc37564"
+  apiKey: "AIzaSyDYtWqNc0xAqo6s-3ABv7WoErZQZYWZuIE",
+  authDomain: "rpg-ailtonrock22.firebaseapp.com",
+  projectId: "rpg-ailtonrock22",
+  storageBucket: "rpg-ailtonrock22.appspot.com",
+  messagingSenderId: "107875485976188576408",
+  appId: "1:107875485976188576408:web:8bab27571f0e644fc37564" // VERIFIQUE NO CONSOLE!
 };
 
+// Inicialização do Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// Constantes do jogo
 const CLASSES = [
-  { id: 'guerreiro', name: 'Guerreiro', color: 'bg-red-600', icon: '⚔️' },
-  { id: 'mago', name: 'Mago', color: 'bg-purple-600', icon: '🔮' },
-  { id: 'ladino', name: 'Ladino', color: 'bg-stone-600', icon: '🗡️' },
-  { id: 'clerigo', name: 'Clérigo', color: 'bg-emerald-500', icon: '✨' },
-  { id: 'paladino', name: 'Paladino', color: 'bg-yellow-500', icon: '🛡️' }
+  { id: 'guerreiro', name: 'Guerreiro', color: 'bg-red-600', icon: '⚔️', description: 'Mestre das armas' },
+  { id: 'mago', name: 'Mago', color: 'bg-purple-600', icon: '🔮', description: 'Arcano poderoso' },
+  { id: 'ladino', name: 'Ladino', color: 'bg-stone-600', icon: '🗡️', description: 'Ágil e furtivo' },
+  { id: 'clerigo', name: 'Clérigo', color: 'bg-emerald-500', icon: '✨', description: 'Curandeiro sagrado' },
+  { id: 'paladino', name: 'Paladino', color: 'bg-yellow-500', icon: '🛡️', description: 'Defensor da luz' }
 ];
 
 const MAX_HP = 3;
-const GAME_VERSION = "Alpha-004";
+const GAME_VERSION = "Alpha-2.0";
+const PROCESSING_DELAY = 400; // ms para evitar cliques múltiplos
 
-// LISTA DE FRASES ÉPICAS DE CARREGAMENTO
+// Frases de carregamento
 const LOADING_PHRASES = [
   "Desenrolando pergaminhos ancestrais...",
   "Verificando conhecimentos milenares...",
@@ -45,76 +70,183 @@ const LOADING_PHRASES = [
   "Invocando heróis de outros reinos..."
 ];
 
+// Componente principal
 export default function FunctionalRpgGame() {
+  // Estados de autenticação
   const [user, setUser] = useState(null);
+  const [authError, setAuthError] = useState(null);
   
-  // DADOS PERMANENTES
+  // Estados do perfil
   const [profile, setProfile] = useState(null);
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [newProfile, setNewProfile] = useState({ name: '', classId: 'guerreiro' });
-
-  // DADOS DA PARTIDA
+  
+  // Estados das salas
   const [activeRooms, setActiveRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState(null);
+  
+  // Estados de UI
   const [loading, setLoading] = useState(true);
   const [loadingPhrase, setLoadingPhrase] = useState(LOADING_PHRASES[0]);
-  
-  // PROTEÇÃO CONTRA CLIQUES MÚLTIPLOS
   const [isProcessing, setIsProcessing] = useState(false);
-
-  // ESTADOS TEMPORÁRIOS DO COMBATE
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  
+  // Estados do combate
   const [battleInput, setBattleInput] = useState({ question: '', answer: '', guess: '' });
+  
+  // Refs para controle
+  const processingTimeout = useRef(null);
+  const errorTimeout = useRef(null);
 
-  // 1. Inicializa Autenticação
+  // Limpar timeouts ao desmontar
   useEffect(() => {
-    const initAuth = async () => {
-      try { await signInAnonymously(auth); } 
-      catch (err) { console.warn("Erro Auth", err); }
+    return () => {
+      if (processingTimeout.current) clearTimeout(processingTimeout.current);
+      if (errorTimeout.current) clearTimeout(errorTimeout.current);
     };
-    initAuth();
-    const unsub = onAuthStateChanged(auth, u => setUser(u));
-    return () => unsub();
   }, []);
 
-  // 2. Carrega Perfil Permanente e Escuta Salas Abertas
+  // Mostrar mensagens temporárias
+  const showMessage = useCallback((type, message) => {
+    if (type === 'error') setError(message);
+    else setSuccess(message);
+    
+    if (errorTimeout.current) clearTimeout(errorTimeout.current);
+    errorTimeout.current = setTimeout(() => {
+      setError(null);
+      setSuccess(null);
+    }, 5000);
+  }, []);
+
+  // Liberar processamento após delay
+  const releaseProcessing = useCallback(() => {
+    if (processingTimeout.current) clearTimeout(processingTimeout.current);
+    processingTimeout.current = setTimeout(() => {
+      setIsProcessing(false);
+    }, PROCESSING_DELAY);
+  }, []);
+
+  // 1. Autenticação anônima
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        setLoading(true);
+        await signInAnonymously(auth);
+        console.log('✅ Autenticação anônima realizada');
+      } catch (err) {
+        console.error('❌ Erro na autenticação:', err);
+        setAuthError(err.message);
+        showMessage('error', 'Falha na autenticação. Recarregue a página.');
+      }
+    };
+    
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('👤 Estado da autenticação mudou:', user?.uid || 'null');
+      setUser(user);
+      if (!user) {
+        setLoading(true);
+        setProfile(null);
+        setCurrentRoom(null);
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [showMessage]);
+
+  // 2. Carregar perfil e escutar salas
   useEffect(() => {
     if (!user) return;
-    const unsubProfile = onSnapshot(doc(db, 'rpg_users', user.uid), (docSnap) => {
-      if (docSnap.exists()) {
-        setProfile(docSnap.data());
-        setIsCreatingProfile(false);
-      } else {
-        setIsCreatingProfile(true);
+    
+    console.log('📂 Carregando perfil do usuário:', user.uid);
+    
+    // Listener do perfil
+    const profileRef = doc(db, 'rpg_users', user.uid);
+    const unsubscribeProfile = onSnapshot(profileRef, 
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const profileData = docSnap.data();
+          console.log('✅ Perfil carregado:', profileData.name);
+          setProfile(profileData);
+          setIsCreatingProfile(false);
+        } else {
+          console.log('📝 Perfil não encontrado, mostrando criação');
+          setIsCreatingProfile(true);
+          setProfile(null);
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.error('❌ Erro ao carregar perfil:', error);
+        showMessage('error', 'Erro ao carregar perfil. Tente recarregar.');
+        setLoading(false);
       }
-      setLoading(false);
-    });
+    );
 
-    const q = query(collection(db, 'rpg_rooms'), where('status', '==', 'waiting'));
-    const unsubRooms = onSnapshot(q, (snapshot) => {
-      const rooms = [];
-      snapshot.forEach(d => rooms.push({ id: d.id, ...d.data() }));
-      setActiveRooms(rooms);
-    });
+    // Listener das salas ativas
+    const roomsQuery = query(
+      collection(db, 'rpg_rooms'),
+      where('status', '==', 'waiting')
+    );
+    
+    const unsubscribeRooms = onSnapshot(roomsQuery,
+      (snapshot) => {
+        const rooms = [];
+        snapshot.forEach((doc) => {
+          rooms.push({ id: doc.id, ...doc.data() });
+        });
+        console.log(`🏰 ${rooms.length} salas ativas encontradas`);
+        setActiveRooms(rooms);
+      },
+      (error) => {
+        console.error('❌ Erro ao carregar salas:', error);
+        showMessage('error', 'Erro ao carregar salas.');
+      }
+    );
 
-    return () => { unsubProfile(); unsubRooms(); };
-  }, [user]);
+    return () => {
+      unsubscribeProfile();
+      unsubscribeRooms();
+    };
+  }, [user, showMessage]);
 
-  // 3. Escuta a Sala Atual
+  // 3. Escutar sala atual
   useEffect(() => {
     if (!currentRoom?.id) return;
-    const unsubRoom = onSnapshot(doc(db, 'rpg_rooms', currentRoom.id), (docSnap) => {
-      if (docSnap.exists()) {
-        setCurrentRoom({ id: docSnap.id, ...docSnap.data() });
-      } else {
-        setCurrentRoom(null); // Sala destruída
+    
+    console.log('👂 Escutando sala:', currentRoom.id);
+    
+    const roomRef = doc(db, 'rpg_rooms', currentRoom.id);
+    const unsubscribeRoom = onSnapshot(roomRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const roomData = { id: docSnap.id, ...docSnap.data() };
+          console.log('📡 Atualização da sala:', roomData.status, roomData.battlePhase);
+          setCurrentRoom(roomData);
+        } else {
+          console.log('🗑️ Sala removida');
+          setCurrentRoom(null);
+          showMessage('error', 'A sala foi fechada pelo host.');
+        }
+      },
+      (error) => {
+        console.error('❌ Erro no listener da sala:', error);
+        showMessage('error', 'Erro de conexão com a sala.');
       }
-    });
-    return () => unsubRoom();
-  }, [currentRoom?.id]);
+    );
 
-  // EFEITO DO CARREGAMENTO (Alterna as frases)
+    return () => {
+      console.log('🔌 Parando de escutar sala:', currentRoom.id);
+      unsubscribeRoom();
+    };
+  }, [currentRoom?.id, showMessage]);
+
+  // 4. Animação das frases de carregamento
   useEffect(() => {
     if (!loading) return;
+    
     const interval = setInterval(() => {
       setLoadingPhrase(prev => {
         const currentIndex = LOADING_PHRASES.indexOf(prev);
@@ -122,230 +254,437 @@ export default function FunctionalRpgGame() {
         return LOADING_PHRASES[nextIndex];
       });
     }, 2500);
+    
     return () => clearInterval(interval);
   }, [loading]);
 
-  // --- AÇÕES DO LOBBY ---
-
+  // --- AÇÕES DO PERFIL ---
+  
   const handleCreateProfile = async (e) => {
     e.preventDefault();
-    if (!user || !newProfile.name || isProcessing) return;
+    if (!user || !newProfile.name.trim() || isProcessing) return;
+    
     setIsProcessing(true);
+    console.log('🎭 Criando perfil:', newProfile.name);
+    
     try {
-      await setDoc(doc(db, 'rpg_users', user.uid), {
-        name: newProfile.name,
+      const profileData = {
+        name: newProfile.name.trim(),
         classId: newProfile.classId,
         wins: 0,
-        matchesPlayed: 0
-      });
+        matchesPlayed: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      
+      await setDoc(doc(db, 'rpg_users', user.uid), profileData);
+      console.log('✅ Perfil criado com sucesso');
+      showMessage('success', 'Perfil criado! Bem-vindo, herói!');
+    } catch (err) {
+      console.error('❌ Erro ao criar perfil:', err);
+      showMessage('error', 'Erro ao criar perfil. Tente novamente.');
     } finally {
-      setIsProcessing(false);
+      releaseProcessing();
     }
   };
 
+  // --- AÇÕES DAS SALAS ---
+
   const createRoom = async () => {
-    if (isProcessing) return;
+    if (isProcessing || !profile) return;
+    
     setIsProcessing(true);
+    console.log('🏰 Criando nova sala...');
+    
     try {
-      const newRoomData = {
+      const roomData = {
         hostId: user.uid,
         hostName: profile.name,
-        status: 'waiting', 
-        players: [{ uid: user.uid, name: profile.name, classId: profile.classId, team: 'A' }]
+        status: 'waiting',
+        players: [{
+          uid: user.uid,
+          name: profile.name,
+          classId: profile.classId,
+          team: 'A'
+        }],
+        hpA: MAX_HP,
+        hpB: MAX_HP,
+        turn: 'A',
+        battlePhase: 'idle',
+        currentQuestion: '',
+        currentAnswer: '',
+        currentGuess: '',
+        winner: '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       };
-      // addDoc é o único que precisa esperar (await) para sabermos o ID da sala
-      const roomRef = await addDoc(collection(db, 'rpg_rooms'), newRoomData);
-      setCurrentRoom({ id: roomRef.id, ...newRoomData });
-    } catch (e) {
-      console.error(e);
-      alert("Falha mágica. Verifique a internet e tente novamente.");
+      
+      const docRef = await addDoc(collection(db, 'rpg_rooms'), roomData);
+      console.log('✅ Sala criada:', docRef.id);
+      
+      setCurrentRoom({ id: docRef.id, ...roomData });
+      showMessage('success', 'Sala de batalha criada!');
+    } catch (err) {
+      console.error('❌ Erro ao criar sala:', err);
+      showMessage('error', 'Erro ao criar sala. Verifique sua conexão.');
     } finally {
-      setIsProcessing(false);
+      releaseProcessing();
     }
   };
 
   const joinRoom = async (roomId) => {
-    if (isProcessing) return;
+    if (isProcessing || !profile) return;
+    
     setIsProcessing(true);
+    console.log('🚪 Entrando na sala:', roomId);
+    
     try {
       const roomToJoin = activeRooms.find(r => r.id === roomId);
-      if (!roomToJoin) return;
+      if (!roomToJoin) {
+        showMessage('error', 'Sala não encontrada.');
+        return;
+      }
       
       const isAlreadyInRoom = roomToJoin.players.some(p => p.uid === user.uid);
-      let newPlayers = roomToJoin.players;
       
       if (!isAlreadyInRoom) {
         const teamACount = roomToJoin.players.filter(p => p.team === 'A').length;
         const teamBCount = roomToJoin.players.filter(p => p.team === 'B').length;
         const assignedTeam = teamACount > teamBCount ? 'B' : 'A';
-
-        newPlayers = [...roomToJoin.players, { uid: user.uid, name: profile.name, classId: profile.classId, team: assignedTeam }];
-        updateDoc(doc(db, 'rpg_rooms', roomId), { players: newPlayers }); // Sem await (Otimista)
+        
+        const newPlayers = [
+          ...roomToJoin.players,
+          {
+            uid: user.uid,
+            name: profile.name,
+            classId: profile.classId,
+            team: assignedTeam
+          }
+        ];
+        
+        await updateDoc(doc(db, 'rpg_rooms', roomId), {
+          players: newPlayers,
+          updatedAt: serverTimestamp()
+        });
+        
+        console.log('✅ Entrou na sala, time:', assignedTeam);
+        showMessage('success', `Entrou no time ${assignedTeam}!`);
       }
       
-      setCurrentRoom({ ...roomToJoin, players: newPlayers });
+      setCurrentRoom({ ...roomToJoin, players: newPlayers || roomToJoin.players });
+    } catch (err) {
+      console.error('❌ Erro ao entrar na sala:', err);
+      showMessage('error', 'Erro ao entrar na sala.');
     } finally {
-      setTimeout(() => setIsProcessing(false), 400);
+      releaseProcessing();
     }
   };
 
-  const leaveRoom = () => {
-    if (isProcessing) return;
-    setIsProcessing(true);
+  const leaveRoom = async () => {
+    if (isProcessing || !currentRoom) return;
     
-    if (currentRoom.hostId === user.uid && currentRoom.status === 'waiting') {
-      deleteDoc(doc(db, 'rpg_rooms', currentRoom.id)); 
-    } else {
-      const newPlayers = currentRoom.players.filter(p => p.uid !== user.uid);
-      updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
+    setIsProcessing(true);
+    console.log('🚪 Saindo da sala:', currentRoom.id);
+    
+    try {
+      if (currentRoom.hostId === user.uid && currentRoom.status === 'waiting') {
+        // Host saindo da sala de espera = deletar sala
+        await deleteDoc(doc(db, 'rpg_rooms', currentRoom.id));
+        console.log('🗑️ Sala deletada pelo host');
+        showMessage('success', 'Sala fechada.');
+      } else {
+        // Jogador saindo
+        const newPlayers = currentRoom.players.filter(p => p.uid !== user.uid);
+        
+        if (newPlayers.length === 0 && currentRoom.status === 'waiting') {
+          // Último jogador saiu, deletar sala
+          await deleteDoc(doc(db, 'rpg_rooms', currentRoom.id));
+        } else {
+          await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+            players: newPlayers,
+            updatedAt: serverTimestamp()
+          });
+        }
+        showMessage('success', 'Você saiu da sala.');
+      }
+      
+      setCurrentRoom(null);
+    } catch (err) {
+      console.error('❌ Erro ao sair da sala:', err);
+      showMessage('error', 'Erro ao sair da sala.');
+    } finally {
+      releaseProcessing();
+    }
+  };
+
+  const startGame = async () => {
+    if (isProcessing || !currentRoom?.id) {
+      console.warn('⚠️ Não foi possível iniciar:', { isProcessing, roomId: currentRoom?.id });
+      return;
     }
     
-    setCurrentRoom(null);
-    setTimeout(() => setIsProcessing(false), 400);
+    setIsProcessing(true);
+    console.log('⚔️ Iniciando batalha na sala:', currentRoom.id);
+    
+    try {
+      const roomRef = doc(db, 'rpg_rooms', currentRoom.id);
+      
+      await updateDoc(roomRef, {
+        status: 'playing',
+        hpA: MAX_HP,
+        hpB: MAX_HP,
+        turn: 'A',
+        battlePhase: 'ask',
+        currentQuestion: '',
+        currentAnswer: '',
+        currentGuess: '',
+        updatedAt: serverTimestamp()
+      });
+      
+      console.log('✅ Batalha iniciada com sucesso!');
+      showMessage('success', 'A BATALHA COMEÇOU! ⚔️');
+    } catch (err) {
+      console.error('❌ Erro ao iniciar jogo:', err);
+      showMessage('error', `Erro ao iniciar: ${err.message}`);
+    } finally {
+      releaseProcessing();
+    }
   };
 
-  const startGame = () => {
-    if (isProcessing) return;
+  const addBot = async () => {
+    if (isProcessing || !currentRoom) return;
+    
     setIsProcessing(true);
+    console.log('🤖 Adicionando bot...');
     
-    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
-      status: 'playing',
-      hpA: MAX_HP,
-      hpB: MAX_HP,
-      turn: 'A',
-      battlePhase: 'ask',
-      currentQuestion: '',
-      currentAnswer: '',
-      currentGuess: ''
-    });
-    
-    setTimeout(() => setIsProcessing(false), 500);
-  };
-
-  const addBot = () => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    
-    const botPlayer = {
-      uid: 'bot_' + Math.random().toString(36).substring(2, 9),
-      name: 'Aluno Teste (Bot)',
-      classId: 'mago',
-      team: 'B'
-    };
-    
-    const newPlayers = [...currentRoom.players, botPlayer];
-    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { players: newPlayers });
-    
-    setTimeout(() => setIsProcessing(false), 500);
+    try {
+      const botPlayer = {
+        uid: 'bot_' + Math.random().toString(36).substring(2, 9),
+        name: 'Aluno Teste (Bot)',
+        classId: 'mago',
+        team: 'B'
+      };
+      
+      const newPlayers = [...currentRoom.players, botPlayer];
+      
+      await updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
+        players: newPlayers,
+        updatedAt: serverTimestamp()
+      });
+      
+      console.log('✅ Bot adicionado');
+      showMessage('success', 'Bot adicionado ao time B!');
+    } catch (err) {
+      console.error('❌ Erro ao adicionar bot:', err);
+      showMessage('error', 'Erro ao adicionar bot.');
+    } finally {
+      releaseProcessing();
+    }
   };
 
   // --- AÇÕES DE COMBATE ---
 
-  const submitQuestion = (e) => {
+  const submitQuestion = async (e) => {
     e.preventDefault();
-    if (!battleInput.question || !battleInput.answer || isProcessing) return;
-    setIsProcessing(true);
-    
-    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-      currentQuestion: battleInput.question,
-      currentAnswer: battleInput.answer,
-      battlePhase: 'answer'
-    });
-    
-    setBattleInput({ ...battleInput, question: '', answer: '' });
-    setTimeout(() => setIsProcessing(false), 500);
-  };
-
-  const submitGuess = (e) => {
-    e.preventDefault();
-    if (!battleInput.guess || isProcessing) return;
-    setIsProcessing(true);
-    
-    updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-      currentGuess: battleInput.guess,
-      battlePhase: 'judge'
-    });
-    
-    setBattleInput({ ...battleInput, guess: '' });
-    setTimeout(() => setIsProcessing(false), 500);
-  };
-
-  const judgeAnswer = (isCorrect) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    
-    const isTeamA = currentRoom.turn === 'A';
-    let newHpA = currentRoom.hpA;
-    let newHpB = currentRoom.hpB;
-
-    if (!isCorrect) {
-      if (isTeamA) newHpB -= 1;
-      else newHpA -= 1;
+    if (!battleInput.question.trim() || !battleInput.answer.trim() || isProcessing || !currentRoom?.id) {
+      return;
     }
-
-    if (newHpA <= 0 || newHpB <= 0) {
-      const winner = newHpA > 0 ? 'A' : 'B';
-      updateDoc(doc(db, 'rpg_rooms', currentRoom.id), { 
-        status: 'finished', 
-        winner: winner,
-        hpA: newHpA,
-        hpB: newHpB
+    
+    setIsProcessing(true);
+    console.log('📝 Enviando pergunta...');
+    
+    try {
+      const roomRef = doc(db, 'rpg_rooms', currentRoom.id);
+      
+      await updateDoc(roomRef, {
+        currentQuestion: battleInput.question.trim(),
+        currentAnswer: battleInput.answer.trim(),
+        battlePhase: 'answer',
+        updatedAt: serverTimestamp()
       });
       
-      // Atualiza vitórias no perfil (em segundo plano)
-      currentRoom.players.forEach((p) => {
-        const pIsWinner = p.team === winner;
-        const userRef = doc(db, 'rpg_users', p.uid);
-        getDoc(userRef).then(snap => {
-          if (snap.exists()) {
-            const data = snap.data();
-            updateDoc(userRef, { 
-              matchesPlayed: (data.matchesPlayed || 0) + 1,
-              wins: pIsWinner ? (data.wins || 0) + 1 : (data.wins || 0)
-            });
-          }
-        });
-      });
-    } else {
-      // Combate continua
-      updateDoc(doc(db, 'rpg_rooms', currentRoom.id), {
-        hpA: newHpA,
-        hpB: newHpB,
-        turn: isTeamA ? 'B' : 'A',
-        battlePhase: 'ask',
-        currentQuestion: '',
-        currentAnswer: '',
-        currentGuess: ''
-      });
+      setBattleInput({ question: '', answer: '', guess: '' });
+      console.log('✅ Pergunta enviada');
+    } catch (err) {
+      console.error('❌ Erro ao enviar pergunta:', err);
+      showMessage('error', 'Erro ao enviar pergunta.');
+    } finally {
+      releaseProcessing();
     }
-    
-    setTimeout(() => setIsProcessing(false), 500);
   };
 
+  const submitGuess = async (e) => {
+    e.preventDefault();
+    if (!battleInput.guess.trim() || isProcessing || !currentRoom?.id) {
+      return;
+    }
+    
+    setIsProcessing(true);
+    console.log('🤔 Enviando resposta...');
+    
+    try {
+      const roomRef = doc(db, 'rpg_rooms', currentRoom.id);
+      
+      await updateDoc(roomRef, {
+        currentGuess: battleInput.guess.trim(),
+        battlePhase: 'judge',
+        updatedAt: serverTimestamp()
+      });
+      
+      setBattleInput({ ...battleInput, guess: '' });
+      console.log('✅ Resposta enviada');
+    } catch (err) {
+      console.error('❌ Erro ao enviar resposta:', err);
+      showMessage('error', 'Erro ao enviar resposta.');
+    } finally {
+      releaseProcessing();
+    }
+  };
+
+  const judgeAnswer = async (isCorrect) => {
+    if (isProcessing || !currentRoom?.id) return;
+    
+    setIsProcessing(true);
+    console.log('⚖️ Julgando resposta...', isCorrect ? 'CORRETA' : 'ERRADA');
+    
+    try {
+      const isTeamA = currentRoom.turn === 'A';
+      let newHpA = currentRoom.hpA;
+      let newHpB = currentRoom.hpB;
+      
+      // Se errou, o time atual perde 1 HP
+      if (!isCorrect) {
+        if (isTeamA) {
+          newHpB = Math.max(0, newHpB - 1);
+        } else {
+          newHpA = Math.max(0, newHpA - 1);
+        }
+      }
+      
+      const roomRef = doc(db, 'rpg_rooms', currentRoom.id);
+      
+      // Verificar se o jogo acabou
+      if (newHpA <= 0 || newHpB <= 0) {
+        const winner = newHpA > 0 ? 'A' : 'B';
+        console.log('🏆 Vencedor:', 'Time', winner);
+        
+        await updateDoc(roomRef, {
+          status: 'finished',
+          winner: winner,
+          hpA: newHpA,
+          hpB: newHpB,
+          battlePhase: 'finished',
+          updatedAt: serverTimestamp()
+        });
+        
+        // Atualizar estatísticas dos jogadores (background)
+        currentRoom.players.forEach(async (player) => {
+          if (player.uid.startsWith('bot_') || !player.uid) return;
+          
+          try {
+            const userRef = doc(db, 'rpg_users', player.uid);
+            const userSnap = await getDoc(userRef);
+            
+            if (userSnap.exists()) {
+              const userData = userSnap.data();
+              const isWinner = player.team === winner;
+              
+              await updateDoc(userRef, {
+                matchesPlayed: (userData.matchesPlayed || 0) + 1,
+                wins: isWinner ? (userData.wins || 0) + 1 : (userData.wins || 0),
+                updatedAt: serverTimestamp()
+              });
+            }
+          } catch (err) {
+            console.warn('⚠️ Erro ao atualizar perfil do jogador:', player.name, err);
+          }
+        });
+        
+        showMessage('success', `Time ${winner} venceu a batalha! 🏆`);
+      } else {
+        // Continuar jogo
+        await updateDoc(roomRef, {
+          hpA: newHpA,
+          hpB: newHpB,
+          turn: isTeamA ? 'B' : 'A',
+          battlePhase: 'ask',
+          currentQuestion: '',
+          currentAnswer: '',
+          currentGuess: '',
+          updatedAt: serverTimestamp()
+        });
+        
+        console.log('🔄 Próximo turno:', isTeamA ? 'B' : 'A');
+      }
+    } catch (err) {
+      console.error('❌ Erro no julgamento:', err);
+      showMessage('error', 'Erro ao processar julgamento.');
+    } finally {
+      releaseProcessing();
+    }
+  };
 
   // --- COMPONENTES DE UI ---
 
-  const HealthBar = ({ hp }) => (
+  const HealthBar = ({ hp, team }) => (
     <div className="flex gap-1 justify-center my-2">
       {[...Array(MAX_HP)].map((_, i) => (
-        <Heart key={i} className={`w-8 h-8 transition-all ${i < hp ? 'fill-red-500 text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)] scale-110' : 'fill-stone-800 text-stone-700'}`} />
+        <Heart 
+          key={i} 
+          className={`w-8 h-8 transition-all duration-300 ${
+            i < hp 
+              ? 'fill-red-500 text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)] scale-110' 
+              : 'fill-stone-800 text-stone-700'
+          }`} 
+        />
       ))}
     </div>
   );
 
-  if (loading) return (
-    <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center text-amber-500 font-serif p-4 text-center bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-stone-900 to-stone-950">
-      <Scroll className="w-20 h-20 mb-8 animate-pulse text-amber-600 drop-shadow-[0_0_15px_rgba(217,119,6,0.5)]" />
-      <h2 className="text-3xl md:text-5xl font-black uppercase tracking-widest mb-4">Aguarde, Herói</h2>
-      <p className="text-stone-400 text-xl md:text-2xl animate-pulse transition-all duration-500">{loadingPhrase}</p>
-      <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest">v.{GAME_VERSION}</div>
-    </div>
-  );
+  const MessageAlert = () => {
+    if (!error && !success) return null;
+    
+    return (
+      <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-2xl animate-in slide-in-from-right duration-300 ${
+        error ? 'bg-red-900/90 border border-red-700 text-red-200' : 
+        'bg-emerald-900/90 border border-emerald-700 text-emerald-200'
+      }`}>
+        <div className="flex items-center gap-2">
+          {error ? <AlertCircle className="w-5 h-5" /> : <Check className="w-5 h-5" />}
+          <p className="font-bold">{error || success}</p>
+        </div>
+      </div>
+    );
+  };
 
-  // TELA 1: CRIAÇÃO DE PERFIL
+  // Tela de carregamento
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-stone-950 flex flex-col items-center justify-center text-amber-500 font-serif p-4 text-center bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-stone-900 to-stone-950">
+        <Scroll className="w-20 h-20 mb-8 animate-pulse text-amber-600 drop-shadow-[0_0_15px_rgba(217,119,6,0.5)]" />
+        <h2 className="text-3xl md:text-5xl font-black uppercase tracking-widest mb-4">Aguarde, Herói</h2>
+        <p className="text-stone-400 text-xl md:text-2xl animate-pulse transition-all duration-500">{loadingPhrase}</p>
+        {authError && (
+          <div className="mt-8 p-4 bg-red-900/50 border border-red-700 rounded-lg">
+            <p className="text-red-300 text-sm">{authError}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="mt-2 px-4 py-2 bg-red-700 hover:bg-red-600 rounded text-white text-sm"
+            >
+              Recarregar Página
+            </button>
+          </div>
+        )}
+        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest">v.{GAME_VERSION}</div>
+      </div>
+    );
+  }
+
+  // Tela de criação de perfil
   if (isCreatingProfile) {
     return (
       <div className="min-h-screen bg-stone-950 flex items-center justify-center p-4 font-serif text-stone-200 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-stone-900 to-stone-950">
+        <MessageAlert />
         <form onSubmit={handleCreateProfile} className="max-w-md w-full bg-stone-900 border-2 border-stone-700 p-8 shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-lg relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-700 via-yellow-500 to-amber-700"></div>
           <Scroll className="w-16 h-16 text-amber-500 mx-auto mb-4" />
@@ -354,20 +693,43 @@ export default function FunctionalRpgGame() {
           <div className="space-y-6">
             <div>
               <label className="block text-amber-600 text-sm font-bold mb-2 uppercase tracking-wider">Como serás conhecido?</label>
-              <input required disabled={isProcessing} type="text" value={newProfile.name} onChange={e => setNewProfile({...newProfile, name: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 outline-none focus:border-amber-500 text-amber-100 font-bold rounded-lg text-lg text-center disabled:opacity-50" placeholder="Ex: Arthur" />
+              <input 
+                required 
+                disabled={isProcessing} 
+                type="text" 
+                value={newProfile.name} 
+                onChange={e => setNewProfile({...newProfile, name: e.target.value})} 
+                className="w-full bg-stone-950 border-2 border-stone-700 p-4 outline-none focus:border-amber-500 text-amber-100 font-bold rounded-lg text-lg text-center disabled:opacity-50" 
+                placeholder="Ex: Arthur, o Sábio" 
+                maxLength={30}
+              />
             </div>
             <div>
               <label className="block text-amber-600 text-sm font-bold mb-2 uppercase tracking-wider">Escolhe o teu caminho</label>
               <div className="grid grid-cols-3 gap-3">
                 {CLASSES.map(c => (
-                  <button disabled={isProcessing} key={c.id} type="button" onClick={() => setNewProfile({...newProfile, classId: c.id})} className={`p-4 border-2 rounded-lg flex flex-col items-center gap-2 transition-all disabled:opacity-50 ${newProfile.classId === c.id ? 'border-amber-500 bg-stone-800 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'border-stone-700 bg-stone-950 hover:border-stone-600 hover:bg-stone-900'}`}>
+                  <button 
+                    disabled={isProcessing} 
+                    key={c.id} 
+                    type="button" 
+                    onClick={() => setNewProfile({...newProfile, classId: c.id})} 
+                    className={`p-4 border-2 rounded-lg flex flex-col items-center gap-2 transition-all disabled:opacity-50 ${
+                      newProfile.classId === c.id 
+                        ? 'border-amber-500 bg-stone-800 scale-105 shadow-[0_0_15px_rgba(245,158,11,0.2)]' 
+                        : 'border-stone-700 bg-stone-950 hover:border-stone-600 hover:bg-stone-900'
+                    }`}
+                  >
                     <span className="text-3xl">{c.icon}</span>
                     <span className="text-xs font-bold text-stone-300 uppercase tracking-wider">{c.name}</span>
                   </button>
                 ))}
               </div>
             </div>
-            <button type="submit" disabled={isProcessing} className="w-full bg-amber-700 hover:bg-amber-600 text-stone-100 font-black py-5 mt-4 uppercase tracking-widest rounded-lg transition-colors shadow-lg shadow-amber-900/50 flex items-center justify-center gap-2 disabled:opacity-50">
+            <button 
+              type="submit" 
+              disabled={isProcessing || !newProfile.name.trim()} 
+              className="w-full bg-amber-700 hover:bg-amber-600 text-stone-100 font-black py-5 mt-4 uppercase tracking-widest rounded-lg transition-colors shadow-lg shadow-amber-900/50 flex items-center justify-center gap-2 disabled:opacity-50"
+            >
               {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Swords className="w-5 h-5"/> Iniciar Jornada</>}
             </button>
           </div>
@@ -377,10 +739,11 @@ export default function FunctionalRpgGame() {
     );
   }
 
-  // TELA 2: LOBBY DE SALAS
+  // Tela do lobby (salas)
   if (!currentRoom) {
     return (
       <div className="min-h-screen bg-stone-950 font-serif text-stone-200 p-4 md:p-8">
+        <MessageAlert />
         <div className="max-w-5xl mx-auto">
           {/* Header do Jogador */}
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 mb-8 flex flex-col md:flex-row justify-between items-center gap-6 shadow-xl relative overflow-hidden">
@@ -388,25 +751,41 @@ export default function FunctionalRpgGame() {
                <Shield className="w-64 h-64" />
             </div>
             <div className="flex items-center gap-6 z-10">
-              <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-lg border-4 border-stone-800 ${CLASSES.find(c => c.id === profile.classId)?.color}`}>
-                {CLASSES.find(c => c.id === profile.classId)?.icon}
+              <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-lg border-4 border-stone-800 ${CLASSES.find(c => c.id === profile?.classId)?.color || 'bg-stone-700'}`}>
+                {CLASSES.find(c => c.id === profile?.classId)?.icon || '❓'}
               </div>
               <div>
-                <h1 className="text-4xl font-black text-amber-500">{profile.name}</h1>
-                <p className="text-stone-400 font-bold uppercase text-sm tracking-widest bg-stone-950 inline-block px-3 py-1 rounded-full mt-2 border border-stone-800">{CLASSES.find(c => c.id === profile.classId)?.name}</p>
+                <h1 className="text-4xl font-black text-amber-500">{profile?.name || 'Herói'}</h1>
+                <p className="text-stone-400 font-bold uppercase text-sm tracking-widest bg-stone-950 inline-block px-3 py-1 rounded-full mt-2 border border-stone-800">
+                  {CLASSES.find(c => c.id === profile?.classId)?.name || 'Aventureiro'}
+                </p>
               </div>
             </div>
             <div className="flex gap-8 text-center bg-stone-950 p-4 rounded-xl border border-stone-800 z-10">
-              <div><p className="text-stone-500 text-xs uppercase font-bold tracking-widest mb-1">Vitórias</p><p className="text-3xl font-black text-emerald-500 flex items-center justify-center gap-2"><Trophy className="w-6 h-6"/> {profile.wins || 0}</p></div>
+              <div>
+                <p className="text-stone-500 text-xs uppercase font-bold tracking-widest mb-1">Vitórias</p>
+                <p className="text-3xl font-black text-emerald-500 flex items-center justify-center gap-2">
+                  <Trophy className="w-6 h-6"/> {profile?.wins || 0}
+                </p>
+              </div>
               <div className="w-px bg-stone-800"></div>
-              <div><p className="text-stone-500 text-xs uppercase font-bold tracking-widest mb-1">Batalhas</p><p className="text-3xl font-black text-stone-300">{profile.matchesPlayed || 0}</p></div>
+              <div>
+                <p className="text-stone-500 text-xs uppercase font-bold tracking-widest mb-1">Batalhas</p>
+                <p className="text-3xl font-black text-stone-300">{profile?.matchesPlayed || 0}</p>
+              </div>
             </div>
           </div>
 
           {/* Área de Salas */}
           <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-            <h2 className="text-3xl font-black text-stone-300 flex items-center gap-3 uppercase tracking-widest"><Castle className="w-8 h-8 text-amber-600"/> Campos de Batalha</h2>
-            <button onClick={createRoom} disabled={isProcessing} className="w-full sm:w-auto bg-amber-700 hover:bg-amber-600 text-stone-100 font-black px-8 py-4 flex items-center justify-center gap-2 rounded-xl shadow-[0_0_20px_rgba(217,119,6,0.2)] transition-all hover:scale-105 uppercase tracking-wider disabled:opacity-50">
+            <h2 className="text-3xl font-black text-stone-300 flex items-center gap-3 uppercase tracking-widest">
+              <Castle className="w-8 h-8 text-amber-600"/> Campos de Batalha
+            </h2>
+            <button 
+              onClick={createRoom} 
+              disabled={isProcessing} 
+              className="w-full sm:w-auto bg-amber-700 hover:bg-amber-600 text-stone-100 font-black px-8 py-4 flex items-center justify-center gap-2 rounded-xl shadow-[0_0_20px_rgba(217,119,6,0.2)] transition-all hover:scale-105 uppercase tracking-wider disabled:opacity-50"
+            >
               {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5"/> Criar Batalha</>}
             </button>
           </div>
@@ -423,9 +802,19 @@ export default function FunctionalRpgGame() {
                   <div className="absolute top-0 left-0 w-2 h-full bg-amber-600"></div>
                   <div className="pl-4 mb-6">
                     <h3 className="font-black text-stone-200 text-xl mb-1 truncate">Arena de {room.hostName}</h3>
-                    <p className="text-stone-400 text-sm flex items-center gap-2 font-bold uppercase tracking-wider"><Users className="w-4 h-4 text-amber-500"/> {room.players?.length || 1} Guerreiros</p>
+                    <p className="text-stone-400 text-sm flex items-center gap-2 font-bold uppercase tracking-wider">
+                      <Users className="w-4 h-4 text-amber-500"/> {room.players?.length || 1} Guerreiros
+                    </p>
+                    <p className="text-stone-500 text-xs mt-1">
+                      Time A: {room.players?.filter(p => p.team === 'A').length || 0} | 
+                      Time B: {room.players?.filter(p => p.team === 'B').length || 0}
+                    </p>
                   </div>
-                  <button onClick={() => joinRoom(room.id)} disabled={isProcessing} className="w-full bg-stone-800 hover:bg-amber-700 text-amber-500 hover:text-white border border-stone-700 hover:border-amber-600 py-3 font-black uppercase text-sm rounded-lg transition-all flex justify-center items-center gap-2 disabled:opacity-50">
+                  <button 
+                    onClick={() => joinRoom(room.id)} 
+                    disabled={isProcessing} 
+                    className="w-full bg-stone-800 hover:bg-amber-700 text-amber-500 hover:text-white border border-stone-700 hover:border-amber-600 py-3 font-black uppercase text-sm rounded-lg transition-all flex justify-center items-center gap-2 disabled:opacity-50"
+                  >
                     {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Swords className="w-4 h-4"/> Entrar no Combate</>}
                   </button>
                 </div>
@@ -433,235 +822,5 @@ export default function FunctionalRpgGame() {
             )}
           </div>
         </div>
-        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest">v.{GAME_VERSION}</div>
-      </div>
-    );
-  }
-
-  // TELA 3: DENTRO DA SALA (SALA DE ESPERA OU BATALHA)
-  const isHost = currentRoom.hostId === user.uid;
-  const myTeam = currentRoom.players?.find(p => p.uid === user.uid)?.team;
-  const teamA = currentRoom.players?.filter(p => p.team === 'A') || [];
-  const teamB = currentRoom.players?.filter(p => p.team === 'B') || [];
-
-  return (
-    <div className="min-h-screen bg-stone-950 font-serif flex flex-col p-4 md:p-8">
-      
-      {/* Botão Sair do Topo */}
-      <div className="max-w-7xl w-full mx-auto mb-6 flex justify-between items-center">
-        <button onClick={leaveRoom} disabled={isProcessing} className="text-stone-500 hover:text-red-400 flex items-center gap-2 font-bold text-sm uppercase tracking-widest transition-colors bg-stone-900 px-4 py-2 rounded-lg border border-stone-800 disabled:opacity-50">
-          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4"/>} Fugir da Batalha
-        </button>
-        {currentRoom.status !== 'waiting' && (
-           <div className="bg-stone-900 border border-stone-700 px-6 py-2 rounded-full font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
-             <Target className="w-5 h-5"/> Turno da Equipa {currentRoom.turn}
-           </div>
-        )}
-      </div>
-
-      <div className="flex-1 flex flex-col max-w-7xl mx-auto w-full">
+        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking
         
-        {/* CABEÇALHO DO ESTADO DO JOGO */}
-        {currentRoom.status === 'playing' && (
-           <div className="text-center mb-8 animate-in fade-in zoom-in duration-500">
-             <h2 className="text-3xl md:text-5xl font-black text-red-500 uppercase tracking-widest mb-2 drop-shadow-[0_0_15px_rgba(239,68,68,0.3)]">Combate Mortal!</h2>
-           </div>
-        )}
-
-        {currentRoom.status === 'finished' && (
-          <div className="text-center mb-8 animate-in slide-in-from-top-8 duration-500">
-            <Trophy className="w-24 h-24 text-yellow-500 mx-auto mb-4 drop-shadow-[0_0_40px_rgba(234,179,8,0.6)] animate-bounce" />
-            <h2 className="text-5xl md:text-7xl font-black text-yellow-500 uppercase tracking-widest mb-4">A Equipa {currentRoom.winner} Venceu!</h2>
-            <p className="text-stone-300 text-xl font-bold">Glória eterna foi adicionada aos perfis dos vencedores.</p>
-          </div>
-        )}
-
-        {/* AS DUAS EQUIPAS E VIDAS */}
-        <div className="flex flex-col md:flex-row gap-6 md:gap-12 justify-center items-stretch mb-12">
-          
-          {/* Lado Equipa A */}
-          <div className={`flex-1 bg-stone-900/60 border-4 rounded-2xl p-6 transition-all relative overflow-hidden
-            ${currentRoom.status === 'playing' && currentRoom.turn === 'A' ? 'border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.2)]' : 'border-stone-800'}
-            ${currentRoom.status === 'finished' && currentRoom.winner === 'A' ? 'border-yellow-400 bg-yellow-900/20' : ''}
-          `}>
-            {currentRoom.status === 'playing' && currentRoom.turn === 'A' && <div className="absolute top-0 left-0 w-full h-1 bg-amber-500 animate-pulse"></div>}
-            
-            <h3 className="text-center font-black text-blue-500 uppercase tracking-widest text-2xl mb-2">A Ordem Azul (Eq. A)</h3>
-            {currentRoom.status !== 'waiting' && <HealthBar hp={currentRoom.hpA} />}
-            
-            <div className="mt-6 flex flex-wrap justify-center gap-4">
-              {teamA.map(p => (
-                <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px] relative">
-                   {p.uid === user.uid && <div className="absolute -top-2 -right-2 w-4 h-4 bg-amber-500 rounded-full border-2 border-stone-900 animate-pulse" title="Você"></div>}
-                   <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl mb-2 shadow-lg ${CLASSES.find(c => c.id === p.classId)?.color}`}>{CLASSES.find(c => c.id === p.classId)?.icon}</div>
-                   <p className="font-bold text-stone-200 text-center text-sm truncate w-full">{p.name}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-center">
-            <Swords className="w-16 h-16 text-stone-700" />
-          </div>
-
-          {/* Lado Equipa B */}
-          <div className={`flex-1 bg-stone-900/60 border-4 rounded-2xl p-6 transition-all relative overflow-hidden
-            ${currentRoom.status === 'playing' && currentRoom.turn === 'B' ? 'border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.2)]' : 'border-stone-800'}
-            ${currentRoom.status === 'finished' && currentRoom.winner === 'B' ? 'border-yellow-400 bg-yellow-900/20' : ''}
-          `}>
-            {currentRoom.status === 'playing' && currentRoom.turn === 'B' && <div className="absolute top-0 left-0 w-full h-1 bg-amber-500 animate-pulse"></div>}
-            
-            <h3 className="text-center font-black text-red-500 uppercase tracking-widest text-2xl mb-2">A Fúria Rubra (Eq. B)</h3>
-            {currentRoom.status !== 'waiting' && <HealthBar hp={currentRoom.hpB} />}
-            
-            <div className="mt-6 flex flex-wrap justify-center gap-4">
-              {teamB.length === 0 ? (
-                <div className="w-full flex flex-col items-center justify-center border-2 border-dashed border-stone-700 text-stone-500 rounded-xl p-6">
-                   <span className="font-bold uppercase tracking-wider mb-4">Aguardando Oponente...</span>
-                   {isHost && (
-                     <button onClick={addBot} disabled={isProcessing} className="bg-stone-800 hover:bg-stone-700 text-amber-500 border border-stone-600 px-4 py-2 rounded-lg text-xs flex items-center gap-2 transition-all shadow-md">
-                       {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><UserPlus className="w-4 h-4"/> Adicionar Aluno Teste (Bot)</>}
-                     </button>
-                   )}
-                </div>
-              ) : (
-                teamB.map(p => (
-                  <div key={p.uid} className="flex flex-col items-center bg-stone-950 p-3 rounded-xl border border-stone-800 min-w-[100px] relative">
-                     {p.uid === user.uid && <div className="absolute -top-2 -right-2 w-4 h-4 bg-amber-500 rounded-full border-2 border-stone-900 animate-pulse" title="Você"></div>}
-                     <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl mb-2 shadow-lg ${CLASSES.find(c => c.id === p.classId)?.color}`}>{CLASSES.find(c => c.id === p.classId)?.icon}</div>
-                     <p className="font-bold text-stone-200 text-center text-sm truncate w-full">{p.name}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* --- CONTROLES DE JOGO --- */}
-        
-        {/* Se for o Host e o jogo não começou */}
-        {isHost && currentRoom.status === 'waiting' && teamB.length > 0 && (
-          <div className="text-center animate-in slide-in-from-bottom-4">
-            <button onClick={startGame} disabled={isProcessing} className="px-12 py-6 bg-red-700 hover:bg-red-600 text-white font-black text-3xl uppercase tracking-widest rounded-2xl transition-all shadow-[0_0_40px_rgba(185,28,28,0.5)] hover:scale-105 hover:-translate-y-2 border-4 border-red-900 flex items-center gap-4 mx-auto disabled:opacity-50">
-              {isProcessing ? <Loader2 className="w-8 h-8 fill-white animate-spin" /> : <Play className="w-8 h-8 fill-white"/>} Iniciar Batalha Mortal
-            </button>
-            <p className="mt-4 text-stone-400 font-bold">Preparem os vossos conhecimentos.</p>
-          </div>
-        )}
-
-        {/* --- MECÂNICA DE COMBATE (TURNOS) --- */}
-        {currentRoom.status === 'playing' && (
-          <div className="bg-stone-900 border-2 border-stone-700 rounded-3xl p-8 max-w-4xl w-full mx-auto shadow-2xl relative">
-            
-            {/* 1. FASE DE PERGUNTAR (Ataque) */}
-            {currentRoom.battlePhase === 'ask' && (
-              myTeam === currentRoom.turn ? (
-                // O meu turno: Eu ataco!
-                <form onSubmit={submitQuestion} className="space-y-6 animate-in fade-in zoom-in">
-                  <div className="flex items-center gap-3 mb-6">
-                    <Swords className="w-10 h-10 text-amber-500" />
-                    <h3 className="text-3xl font-black text-white uppercase tracking-widest">Preparar Feitiço de Ataque</h3>
-                  </div>
-                  <p className="text-stone-400 mb-6">O primeiro da vossa equipa a preencher isto lança o ataque. Combinem em voz alta!</p>
-                  
-                  <div>
-                    <label className="block text-amber-500 font-bold uppercase tracking-wider mb-2">Pergunta para o Oponente</label>
-                    <textarea required disabled={isProcessing} value={battleInput.question} onChange={e => setBattleInput({...battleInput, question: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 rounded-xl text-white outline-none focus:border-amber-500 resize-none h-24 disabled:opacity-50" placeholder="Qual é o maior planeta do sistema solar?" />
-                  </div>
-                  <div>
-                    <label className="block text-emerald-500 font-bold uppercase tracking-wider mb-2">A Resposta Certa (Secreta)</label>
-                    <input required disabled={isProcessing} type="text" value={battleInput.answer} onChange={e => setBattleInput({...battleInput, answer: e.target.value})} className="w-full bg-stone-950 border-2 border-stone-700 p-4 rounded-xl text-white outline-none focus:border-emerald-500 disabled:opacity-50" placeholder="Júpiter" />
-                  </div>
-                  <button type="submit" disabled={isProcessing} className="w-full py-5 bg-amber-700 hover:bg-amber-600 text-white font-black text-2xl uppercase tracking-widest rounded-xl transition-all shadow-lg flex justify-center items-center gap-3 disabled:opacity-50">
-                     {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Sparkles className="w-6 h-6"/> Lançar Pergunta!</>}
-                  </button>
-                </form>
-              ) : (
-                // Turno do Inimigo: Aguardar
-                <div className="text-center py-12 animate-pulse">
-                  <Shield className="w-20 h-20 text-stone-600 mx-auto mb-6" />
-                  <h3 className="text-3xl font-black text-stone-400 uppercase tracking-widest">Aguardem...</h3>
-                  <p className="text-stone-500 mt-2 text-xl">A equipa inimiga está a formular um ataque.</p>
-                </div>
-              )
-            )}
-
-            {/* 2. FASE DE RESPONDER (Defesa) */}
-            {currentRoom.battlePhase === 'answer' && (
-              myTeam !== currentRoom.turn ? (
-                // Fui atacado: Tenho de responder!
-                <form onSubmit={submitGuess} className="space-y-8 animate-in slide-in-from-right-8">
-                  <div className="bg-red-950/30 border-2 border-red-900/50 p-8 rounded-2xl text-center shadow-[inset_0_0_50px_rgba(153,27,27,0.2)]">
-                    <h4 className="text-red-500 font-bold uppercase tracking-widest text-sm mb-4">Ataque Inimigo Recebido:</h4>
-                    <p className="text-4xl md:text-5xl font-black text-white leading-tight">"{currentRoom.currentQuestion}"</p>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-blue-400 font-bold uppercase tracking-wider mb-3 text-center">Rápido! Qual é a vossa defesa?</label>
-                    <input required disabled={isProcessing} type="text" value={battleInput.guess} onChange={e => setBattleInput({...battleInput, guess: e.target.value})} className="w-full bg-stone-950 border-2 border-blue-900 p-6 rounded-2xl text-white outline-none focus:border-blue-500 text-center text-2xl font-bold disabled:opacity-50" placeholder="Digite a resposta aqui..." />
-                  </div>
-                  <button type="submit" disabled={isProcessing} className="w-full py-5 bg-blue-700 hover:bg-blue-600 text-white font-black text-2xl uppercase tracking-widest rounded-xl transition-all shadow-[0_0_20px_rgba(29,78,216,0.4)] flex justify-center items-center gap-3 disabled:opacity-50">
-                     {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Shield className="w-6 h-6"/> Levantar Escudo! (Responder)</>}
-                  </button>
-                </form>
-              ) : (
-                // Eu ataquei: Aguardar a resposta deles
-                <div className="text-center py-12">
-                  <h4 className="text-amber-500 font-bold uppercase tracking-widest text-sm mb-4">O seu ataque:</h4>
-                  <p className="text-3xl font-black text-white mb-8">"{currentRoom.currentQuestion}"</p>
-                  <p className="text-stone-500 text-xl animate-pulse">A aguardar que a equipa inimiga responda...</p>
-                </div>
-              )
-            )}
-
-            {/* 3. FASE DE JULGAMENTO (O Mestre da Vez) */}
-            {currentRoom.battlePhase === 'judge' && (
-              myTeam === currentRoom.turn ? (
-                // Sou o atacante: Julgar se a resposta deles serve!
-                <div className="space-y-8 animate-in zoom-in-95">
-                  <div className="text-center mb-8">
-                    <h3 className="text-3xl font-black text-amber-500 uppercase tracking-widest mb-2">Julgamento</h3>
-                    <p className="text-stone-400">Eles responderam. Cabe-vos a vós decidir se a resposta é aceitável!</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="bg-emerald-950/30 border-2 border-emerald-900/50 p-6 rounded-2xl text-center">
-                      <span className="block text-emerald-500 font-bold uppercase text-xs tracking-widest mb-2">A Vossa Resposta Secreta:</span>
-                      <p className="text-2xl font-black text-white">{currentRoom.currentAnswer}</p>
-                    </div>
-                    <div className="bg-blue-950/30 border-2 border-blue-900/50 p-6 rounded-2xl text-center">
-                      <span className="block text-blue-400 font-bold uppercase text-xs tracking-widest mb-2">O que o Inimigo Respondeu:</span>
-                      <p className="text-2xl font-black text-white">{currentRoom.currentGuess}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-stone-800">
-                    <button onClick={() => judgeAnswer(true)} disabled={isProcessing} className="flex-1 py-5 bg-stone-800 hover:bg-emerald-900 text-emerald-400 font-black uppercase tracking-widest rounded-xl transition-all border border-stone-700 hover:border-emerald-500 flex justify-center items-center gap-2 disabled:opacity-50">
-                       {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><Check className="w-6 h-6"/> Aceitar Defesa</>}
-                    </button>
-                    <button onClick={() => judgeAnswer(false)} disabled={isProcessing} className="flex-1 py-5 bg-stone-800 hover:bg-red-900 text-red-500 font-black uppercase tracking-widest rounded-xl transition-all border border-stone-700 hover:border-red-500 flex justify-center items-center gap-2 disabled:opacity-50">
-                       {isProcessing ? <Loader2 className="w-6 h-6 animate-spin" /> : <><X className="w-6 h-6"/> Recusar (Causar Dano)</>}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                // Sou a defesa: Esperar o veredito
-                <div className="text-center py-12">
-                  <h3 className="text-4xl font-black text-white mb-6">O Veredito...</h3>
-                  <div className="bg-stone-900 inline-block p-6 rounded-2xl border border-stone-800 mb-6 shadow-xl">
-                    <span className="block text-stone-500 font-bold uppercase text-xs tracking-widest mb-2">Vossa Resposta:</span>
-                    <p className="text-2xl font-black text-blue-400">{currentRoom.currentGuess}</p>
-                  </div>
-                  <p className="text-stone-400 text-xl animate-pulse">A equipa inimiga está a decidir se aceita a vossa resposta!</p>
-                </div>
-              )
-            )}
-
-          </div>
-        )}
-
-        <div className="fixed bottom-4 right-4 text-stone-700 font-bold text-xs uppercase tracking-widest z-50 pointer-events-none">v.{GAME_VERSION}</div>
-      </div>
-    </div>
-  );
-}
